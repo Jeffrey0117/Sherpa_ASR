@@ -28,6 +28,13 @@ import numpy as np
 
 from punctuation import add_punctuation
 
+# 簡轉繁
+try:
+    from opencc import OpenCC
+    _s2t = OpenCC('s2t')
+except ImportError:
+    _s2t = None
+
 # Logging
 logging.basicConfig(
     level=logging.INFO,
@@ -138,9 +145,9 @@ class SherpaServer:
 
             vad_config = sherpa_onnx.VadModelConfig()
             vad_config.silero_vad.model = vad_model_path
-            vad_config.silero_vad.threshold = 0.4
-            vad_config.silero_vad.min_silence_duration = 0.25
-            vad_config.silero_vad.min_speech_duration = 0.15
+            vad_config.silero_vad.threshold = 0.3
+            vad_config.silero_vad.min_silence_duration = 0.4
+            vad_config.silero_vad.min_speech_duration = 0.1
             vad_config.silero_vad.max_speech_duration = 15.0
             vad_config.silero_vad.window_size = 512
             vad_config.sample_rate = 16000
@@ -201,7 +208,7 @@ class SherpaServer:
     # ── Audio Processing ───────────────────────────────────────────────────
 
     def _preprocess_audio(self, samples):
-        """Audio preprocessing: normalize volume, denoise"""
+        """Audio preprocessing: normalize volume"""
         if len(samples) == 0:
             return samples
 
@@ -217,17 +224,15 @@ class SherpaServer:
                 samples = samples * (target_peak / max_val)
                 logger.debug(f"Volume: reduced to {target_peak:.1f} (peak: {max_val:.3f})")
 
-        # Simple denoising: zero out low-energy samples
-        noise_threshold = 0.005
-        samples = np.where(np.abs(samples) < noise_threshold, 0, samples)
-
         return samples.astype(np.float32)
 
     def _speedup_audio(self, samples):
-        """Speed up audio by dropping samples (2x = keep every 2nd sample)"""
+        """Speed up audio via resampling (1.5x = keep 2/3 of samples)"""
         if self.speed_factor <= 1:
             return samples
-        return samples[::self.speed_factor]
+        new_len = int(len(samples) / self.speed_factor)
+        old_indices = np.linspace(0, len(samples) - 1, new_len)
+        return np.interp(old_indices, np.arange(len(samples)), samples).astype(np.float32)
 
     def _read_wave_file(self, wav_path):
         """Read WAV file"""
@@ -444,15 +449,16 @@ class SherpaServer:
             self.total_audio_duration += duration
             self.vad_skipped_duration += skipped_duration
 
-            # Add punctuation
-            text_with_punc = add_punctuation(text)
+            # 簡轉繁 → 標點
+            text_tc = _s2t.convert(text) if _s2t else text
+            text_with_punc = add_punctuation(text_tc)
 
             logger.info(f"Result: {text_with_punc[:100]}... (RTF: {rtf:.3f})")
 
             return {
                 "success": True,
                 "text": text_with_punc,
-                "raw_text": text,
+                "raw_text": text_tc,
                 "confidence": 0.95,
                 "duration": duration,
                 "language": "zh",
@@ -587,7 +593,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Sherpa-ONNX ASR Server")
     parser.add_argument("--model-dir", type=str, default=None, help="Model directory path")
-    parser.add_argument("--speed", type=int, default=2, choices=[1, 2, 3], help="Audio speed factor (default: 2)")
+    parser.add_argument("--speed", type=float, default=1.5, help="Audio speed factor (default: 1.5)")
     args = parser.parse_args()
 
     server = SherpaServer(model_dir=args.model_dir)
