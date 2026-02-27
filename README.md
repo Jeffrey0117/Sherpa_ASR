@@ -113,5 +113,6 @@ Sherpa_ASR/
 
 ## Related
 
+- [biaodian](https://github.com/Jeffrey0117/biaodian) — Chinese punctuation formatter (punctuation.py originates here)
 - [ClaudeBot](https://github.com/Jeffrey0117/ClaudeBot) — Telegram command center for Claude Code
 - [Hanzi_ASR](https://github.com/Jeffrey0117/Hanzi_ASR) — Chinese ASR system (different model architecture)
