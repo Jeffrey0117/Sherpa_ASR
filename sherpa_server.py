@@ -22,6 +22,8 @@ import logging
 import traceback
 import signal
 import wave
+import tarfile
+import urllib.request
 import numpy as np
 
 from punctuation import add_punctuation
@@ -64,21 +66,56 @@ class SherpaServer:
         signal.signal(signal.SIGINT, self._signal_handler)
 
     def _find_model_dir(self):
-        """Find sherpa-onnx Paraformer model directory"""
+        """Find sherpa-onnx Paraformer model directory, auto-download if missing"""
         script_dir = os.path.dirname(os.path.abspath(__file__))
+        models_dir = os.path.join(script_dir, "models")
+        model_name = "sherpa-onnx-paraformer-zh-2023-09-14"
+        local_model = os.path.join(models_dir, model_name)
 
         # Check local models/ directory
-        local_model = os.path.join(script_dir, "models", "sherpa-onnx-paraformer-zh-2023-09-14")
-        if os.path.exists(local_model):
+        if os.path.exists(os.path.join(local_model, "model.int8.onnx")):
             return local_model
 
         # Check user cache
         cache_dir = os.path.expanduser("~/.cache/sherpa-onnx")
-        cache_model = os.path.join(cache_dir, "sherpa-onnx-paraformer-zh-2023-09-14")
-        if os.path.exists(cache_model):
+        cache_model = os.path.join(cache_dir, model_name)
+        if os.path.exists(os.path.join(cache_model, "model.int8.onnx")):
             return cache_model
 
+        # Auto-download
+        logger.info("Model not found, downloading automatically...")
+        self._download_models(models_dir, model_name)
         return local_model
+
+    def _download_models(self, models_dir, model_name):
+        """Download Paraformer model + Silero VAD automatically"""
+        os.makedirs(models_dir, exist_ok=True)
+
+        # Paraformer model (~200MB)
+        tar_url = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/{model_name}.tar.bz2"
+        tar_path = os.path.join(models_dir, f"{model_name}.tar.bz2")
+
+        logger.info(f"Downloading Paraformer model...")
+        try:
+            urllib.request.urlretrieve(tar_url, tar_path)
+            with tarfile.open(tar_path, "r:bz2") as tar:
+                tar.extractall(path=models_dir)
+            os.remove(tar_path)
+            logger.info("Paraformer model downloaded")
+        except Exception as e:
+            logger.error(f"Model download failed: {e}")
+            logger.error("Manual download: https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models")
+
+        # Silero VAD (~2MB)
+        vad_path = os.path.join(models_dir, "silero_vad.onnx")
+        if not os.path.exists(vad_path):
+            vad_url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
+            logger.info("Downloading Silero VAD model...")
+            try:
+                urllib.request.urlretrieve(vad_url, vad_path)
+                logger.info("Silero VAD model downloaded")
+            except Exception as e:
+                logger.warning(f"VAD download failed: {e} (VAD is optional)")
 
     def _signal_handler(self, signum, frame):
         logger.info(f"Signal {signum} received, shutting down...")
